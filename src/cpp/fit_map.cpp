@@ -98,7 +98,7 @@ int main(int argc, char** argv) {
         const double maxAbsLatDeg = std::stod(argv[3]);
         const double lambda = argc == 6 ? std::stod(argv[5]) : -1.0;
 
-        const SynopticMap map = readGongMap(argv[1]);
+        const SynopticMap map = readSynopticMap(argv[1]);
         const ShFit fit = fitSynopticMap(map, lmax, maxAbsLatDeg, lambda);
         const std::vector<double> model =
             pfssBrOnGrid(fit.coeffs, DEFAULT_SOURCE_SURFACE_RADIUS, 1.0, map.nLon, map.nLat);

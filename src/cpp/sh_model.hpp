@@ -4,6 +4,7 @@
 
 #include "synoptic_map.hpp"
 
+#include <array>
 #include <string>
 #include <vector>
 
@@ -26,11 +27,21 @@ struct ShFit {
     double lambda;           // lambda utilisé
     double conditionNumber;  // sigma_max / sigma_min
     int nPixels;             // pixels utilisés
+    // Temps des 4 étapes (s) : dense = matrice, QR + SVD, courbe en L, solution ;
+    // anneaux = Fourier, blocs, courbe en L, solutions.
+    std::array<double, 4> stageSeconds;
 };
 
-// Ajuste B_r sur les pixels de |latitude| <= maxAbsLatDeg. lambda < 0 : lambda au coin
-// de la courbe en L ; sinon lambda imposé (0 : moindres carrés ordinaires).
-ShFit fitSynopticMap(const SynopticMap& map, int lmax, double maxAbsLatDeg, double lambda = -1.0);
+// Rings : anneaux de latitude complets, découpage exact par blocs (m ; cos/sin), rapide.
+// Dense : pixels quelconques, grande matrice (référence, et cas hors grille régulière).
+// Les deux donnent la même solution sur une carte synoptique (tests/test_sh_rings.f90).
+enum class FitSolver { Rings, Dense };
+
+// Ajuste B_r sur les pixels de |latitude| <= maxAbsLatDeg, pixels manquants exclus
+// (anneaux : rangées incomplètes exclues). lambda < 0 : lambda au coin de la courbe
+// en L ; sinon lambda imposé (0 : moindres carrés ordinaires).
+ShFit fitSynopticMap(const SynopticMap& map, int lmax, double maxAbsLatDeg, double lambda = -1.0,
+                     FitSolver solver = FitSolver::Rings);
 
 // Coefficients de B_r au rayon r (rayons solaires), monopôle retiré.
 ShCoefficients pfssCoefficients(const ShCoefficients& coeffs, double rss, double r);

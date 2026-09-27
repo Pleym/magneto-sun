@@ -15,11 +15,14 @@
 namespace {
 
 constexpr double PI = 3.14159265358979323846;
-// Écart relatif toléré sur l'étendue d'un axe : GONG écrit CDELT2 = 0.0111111
-// (2/180 tronqué à 7 chiffres), d'où 180 * CDELT2 = 1.999998 au lieu de 2.
-constexpr double SPAN_TOLERANCE = 1e-5;
-// Écart toléré sur la position d'un centre de pixel, en fraction de pixel.
+// Écart relatif toléré sur l'étendue d'un axe : CDELT2 est arrondi dans les en-têtes,
+// 0.0111111 pour GONG (180 * CDELT2 = 1.999998) et 0.001389 pour HMI (1440 * CDELT2 = 2.00016).
+constexpr double SPAN_TOLERANCE = 2e-4;
+// Écart toléré sur la position d'un centre de pixel en longitude, en fraction de pixel.
 constexpr double PIXEL_TOLERANCE = 1e-3;
+// Idem en latitude : l'arrondi de CDELT2 de HMI décale le bord de la grille de 0,06 pixel.
+constexpr double LAT_PIXEL_TOLERANCE = 0.1;
+constexpr int NO_MISSING_VALUES = 0;
 
 struct FitsCloser {
     void operator()(fitsfile* fptr) const {
@@ -74,16 +77,20 @@ int readInt(fitsfile* f, const std::string& path, const char* key) {
     return value;
 }
 
-double readDoubleOr(fitsfile* f, const std::string& path, const char* key, double fallback) {
+bool hasKey(fitsfile* f, const char* key) {
     int status = 0;
-    double value = fallback;
-    fits_read_key(f, TDOUBLE, key, &value, nullptr, &status);
-    if (status == KEY_NO_EXIST) {
-        fits_clear_errmsg();
-        return fallback;
-    }
-    checkStatus(status, path, std::string("mot-clé ") + key + " illisible");
-    return value;
+    char card[FLEN_CARD];
+    fits_read_card(f, key, card, &status);
+    fits_clear_errmsg();
+    return status == 0;
+}
+
+double readDoubleOr(fitsfile* f, const std::string& path, const char* key, double fallback) {
+    return hasKey(f, key) ? readDouble(f, path, key) : fallback;
+}
+
+int readIntOr(fitsfile* f, const std::string& path, const char* key, int fallback) {
+    return hasKey(f, key) ? readInt(f, path, key) : fallback;
 }
 
 void requireEqual(const std::string& path, const char* key, const std::string& value,
@@ -92,6 +99,8 @@ void requireEqual(const std::string& path, const char* key, const std::string& v
         fail(path, std::string(key) + " = '" + value + "', '" + expected + "' attendu");
     }
 }
+
+double wrap360(double deg) { return std::fmod(std::fmod(deg, 360.0) + 360.0, 360.0); }
 
 std::pair<int, int> readImageSize(fitsfile* f, const std::string& path) {
     int status = 0;
@@ -110,24 +119,27 @@ std::pair<int, int> readImageSize(fitsfile* f, const std::string& path) {
     return {static_cast<int>(nAxes[0]), static_cast<int>(nAxes[1])};
 }
 
-// Vérifie l'axe des longitudes et renvoie la colonne canonique de la première
-// colonne du fichier : les cartes horaires GONG commencent à une longitude
-// quelconque (LONG0, dans le nom du fichier), on les remet à partir de 0°.
-int checkLongitudeAxis(fitsfile* f, const std::string& path, int nLon) {
+struct LongitudeAxis {
+    double firstLonDeg;   // premier pixel du fichier, ramené dans [0, 360[
+    double stepDeg;       // CDELT1 : négatif si les longitudes décroissent (HMI)
+    double offsetPixels;  // centre de la colonne canonique 0, en fraction de pixel
+};
+
+// Les cartes commencent à une longitude quelconque (GONG : LONG0 ; HMI : longitudes
+// décroissantes, CRVAL1 en « temps de Carrington ») : on relève où tombe la première
+// colonne pour les remettre à partir de 0°, dans l'ordre croissant.
+LongitudeAxis checkLongitudeAxis(fitsfile* f, const std::string& path, int nLon) {
     requireEqual(path, "CTYPE1", readString(f, path, "CTYPE1"), "CRLN-CEA");
     const double step = readDouble(f, path, "CDELT1");
-    if (std::abs(step * nLon / 360.0 - 1.0) > SPAN_TOLERANCE) {
-        fail(path, "CDELT1 * NAXIS1 = " + std::to_string(step * nLon) + "°, 360° attendus");
+    if (std::abs(std::abs(step) * nLon / 360.0 - 1.0) > SPAN_TOLERANCE) {
+        fail(path, "|CDELT1| * NAXIS1 = " + std::to_string(std::abs(step) * nLon) +
+                       "°, 360° attendus");
     }
-    const double firstLon =
-        readDouble(f, path, "CRVAL1") + (1.0 - readDouble(f, path, "CRPIX1")) * step;
-    const double wrappedLon = std::fmod(std::fmod(firstLon, 360.0) + 360.0, 360.0);
-    const double shift = wrappedLon * nLon / 360.0 - 0.5;
-    if (std::abs(shift - std::round(shift)) > PIXEL_TOLERANCE) {
-        fail(path, "première colonne à " + std::to_string(firstLon) +
-                       "° : pixels non alignés sur la grille canonique");
-    }
-    return static_cast<int>(std::lround(shift)) % nLon;
+    const double firstLon = wrap360(readDouble(f, path, "CRVAL1") +
+                                    (1.0 - readDouble(f, path, "CRPIX1")) * step);
+    const double position = firstLon * nLon / 360.0;
+    const double offset = position - std::floor(position + PIXEL_TOLERANCE);
+    return {firstLon, step, std::abs(offset) < PIXEL_TOLERANCE ? 0.0 : offset};
 }
 
 void checkSineLatitudeAxis(fitsfile* f, const std::string& path, int nLat) {
@@ -145,7 +157,7 @@ void checkSineLatitudeAxis(fitsfile* f, const std::string& path, int nLat) {
     const double firstSinLat =
         readDouble(f, path, "CRVAL2") + (1.0 - readDouble(f, path, "CRPIX2")) * step;
     const double expected = -1.0 + 1.0 / nLat;
-    if (std::abs(firstSinLat - expected) > PIXEL_TOLERANCE * 2.0 / nLat) {
+    if (std::abs(firstSinLat - expected) > LAT_PIXEL_TOLERANCE * 2.0 / nLat) {
         fail(path, "première ligne à sin(lat) = " + std::to_string(firstSinLat) + ", " +
                        std::to_string(expected) + " attendu (bord du pôle sud)");
     }
@@ -159,56 +171,90 @@ std::vector<double> readPixels(fitsfile* f, const std::string& path, int nLon, i
     fits_read_pix(f, TDOUBLE, firstPixel, pixels.size(), nullptr, pixels.data(), &hasNull,
                   &status);
     checkStatus(status, path, "lecture des pixels impossible");
+    // Pixels manquants acceptés seulement s'ils sont déclarés (MISSVALS, cartes HMI)
     const auto badCount =
         std::count_if(pixels.begin(), pixels.end(), [](double v) { return !std::isfinite(v); });
-    if (badCount > 0) {
-        fail(path, std::to_string(badCount) + " pixel(s) non fini(s) (NaN ou infini)");
+    const int declared = readIntOr(f, path, "MISSVALS", NO_MISSING_VALUES);
+    if (badCount > 0 && badCount != declared) {
+        fail(path, std::to_string(badCount) + " pixel(s) non fini(s) (NaN ou infini), " +
+                       std::to_string(declared) + " déclaré(s) par MISSVALS");
     }
     return pixels;
 }
 
-std::vector<double> rollLongitude(const std::vector<double>& pixels, int nLon, int nLat,
-                                  int firstColumn) {
-    std::vector<double> rolled(pixels.size());
+// Colonnes remises dans l'ordre des longitudes croissantes, la colonne k centrée en
+// (k + offset) * 360 / nLon.
+std::vector<double> toCanonicalColumns(const std::vector<double>& pixels, int nLon, int nLat,
+                                       const LongitudeAxis& axis, const std::string& path) {
+    std::vector<int> column(nLon);
+    std::vector<bool> isUsed(nLon, false);
+    for (int i = 0; i < nLon; ++i) {
+        const double position = wrap360(axis.firstLonDeg + i * axis.stepDeg) * nLon / 360.0;
+        const int k = static_cast<int>(std::lround(position - axis.offsetPixels) % nLon);
+        if (isUsed[k]) {
+            fail(path, "colonnes de longitude non alignées sur une grille régulière");
+        }
+        isUsed[k] = true;
+        column[i] = k;
+    }
+    std::vector<double> canonical(pixels.size());
     for (int j = 0; j < nLat; ++j) {
         const size_t row = static_cast<size_t>(j) * nLon;
         for (int i = 0; i < nLon; ++i) {
-            rolled[row + (i + firstColumn) % nLon] = pixels[row + i];
+            canonical[row + column[i]] = pixels[row + i];
         }
     }
-    return rolled;
+    return canonical;
+}
+
+// UT de la carte : MAPDATE/MAPTIME (GONG) ou T_OBS (HMI).
+std::string readObservationTime(fitsfile* f, const std::string& path) {
+    if (hasKey(f, "MAPDATE")) {
+        return readString(f, path, "MAPDATE") + "T" + readString(f, path, "MAPTIME");
+    }
+    return readString(f, path, "T_OBS");
 }
 
 }  // namespace
 
-double SynopticMap::longitudeDeg(int iLon) const { return (iLon + 0.5) * 360.0 / nLon; }
+double SynopticMap::longitudeDeg(int iLon) const {
+    return (iLon + lonOffsetPixels) * 360.0 / nLon;
+}
 
 double SynopticMap::sinLatitude(int iLat) const { return -1.0 + (iLat + 0.5) * 2.0 / nLat; }
 
-SynopticMap readGongMap(const std::string& path) {
+SynopticMap readSynopticMap(const std::string& path) {
     const FitsPtr file = openFits(path);
     fitsfile* f = file.get();
     const auto [nLon, nLat] = readImageSize(f, path);
-    const int firstColumn = checkLongitudeAxis(f, path, nLon);
+    const LongitudeAxis axis = checkLongitudeAxis(f, path, nLon);
     checkSineLatitudeAxis(f, path, nLat);
-    requireEqual(path, "BUNIT", readString(f, path, "BUNIT"), "Gauss");
+    // 1 Mx/cm^2 = 1 G : les deux unités désignent la même densité de flux
+    const std::string unit = readString(f, path, "BUNIT");
+    if (unit != "Gauss" && unit != "Mx/cm^2") {
+        fail(path, "BUNIT = '" + unit + "', 'Gauss' ou 'Mx/cm^2' attendu");
+    }
 
     return SynopticMap{
         nLon,
         nLat,
-        rollLongitude(readPixels(f, path, nLon, nLat), nLon, nLat, firstColumn),
+        toCanonicalColumns(readPixels(f, path, nLon, nLat), nLon, nLat, axis, path),
         readInt(f, path, "CAR_ROT"),
-        readString(f, path, "MAPDATE") + "T" + readString(f, path, "MAPTIME"),
+        readObservationTime(f, path),
+        axis.offsetPixels,
     };
 }
 
 FluxBalance computeFluxBalance(const SynopticMap& map) {
-    // Pixels d'aire égale : chacun couvre 4 pi R^2 / (nLon * nLat).
+    // Pixels d'aire égale : chacun couvre 4 pi R^2 / (nLon * nLat). Pixels manquants ignorés.
     const double pixelAreaCm2 =
         4.0 * PI * SOLAR_RADIUS_CM * SOLAR_RADIUS_CM / (static_cast<double>(map.nLon) * map.nLat);
     double net = 0.0;
     double unsignedSum = 0.0;
     for (const double b : map.br) {
+        if (!std::isfinite(b)) {
+            continue;
+        }
         net += b;
         unsignedSum += std::abs(b);
     }

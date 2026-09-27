@@ -13,11 +13,14 @@ struct SynopticMap {
     int nLat = 0;
     // B_r en gauss, rangé comme le tableau Fortran br(nLon, nLat) :
     // le pixel (iLon, iLat), indices à partir de 0, est br[iLat * nLon + iLon].
+    // NaN pour les pixels manquants déclarés par la carte (HMI : pôle caché).
     std::vector<double> br;
     int carringtonRotation = 0;
-    std::string observationTime;  // UT du dernier magnétogramme intégré
+    std::string observationTime;  // UT de la carte
+    // Centre de la colonne 0 en fraction de pixel : 0,5 (GONG, 0,5°) ou 0 (HMI, 0°).
+    double lonOffsetPixels = 0.5;
 
-    // Centre du pixel : longitude (iLon + 1/2) * 360/nLon, en degrés.
+    // Centre du pixel : longitude (iLon + lonOffsetPixels) * 360/nLon, en degrés.
     double longitudeDeg(int iLon) const;
     // Centre du pixel : -1 + (iLat + 1/2) * 2/nLat (iLat = 0 au pôle sud).
     double sinLatitude(int iLat) const;
@@ -28,10 +31,11 @@ struct FluxBalance {
     double unsignedFluxMx;  // intégrale de |B_r| sur la sphère
 };
 
-// Lit une carte synoptique horaire GONG (mrzqs*.fits ou .fits.gz), vérifie sa
-// grille et la remet sur la grille canonique (première colonne à 0,5 pixel de 0°).
+// Lit une carte synoptique GONG (mrzqs*.fits[.gz]) ou HMI (hmi.Synoptic_Mr.*.fits),
+// vérifie sa grille (longitude de Carrington x sinus de latitude) et la remet dans
+// l'ordre canonique : longitudes croissantes à partir de 0°, latitudes du sud au nord.
 // Lève std::runtime_error si le fichier est illisible ou ne correspond pas.
-SynopticMap readGongMap(const std::string& path);
+SynopticMap readSynopticMap(const std::string& path);
 
 FluxBalance computeFluxBalance(const SynopticMap& map);
 

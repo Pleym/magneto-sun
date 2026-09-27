@@ -11,10 +11,43 @@ module sh_fit
   use legendre, only: schmidt_legendre
   implicit none
   private
-  public :: coef_count, design_matrix, svd_decompose, tikhonov_solve, tikhonov_norms, &
-            lcurve_corner, pack_coefs, unpack_coefs, synthesis
+  public :: coef_count, design_matrix, svd_decompose, svd_decompose_multi, tikhonov_solve, &
+            tikhonov_norms, &
+            lcurve_corner, lambda_grid, lcurve_scan, pack_coefs, unpack_coefs, synthesis, &
+            wall_seconds
+
+  ! Plus petit lambda exploré pour la courbe en L, en fraction de sigma_max.
+  real(dp), parameter :: LAMBDA_MIN_RATIO = 1e-8_dp
 
 contains
+
+  !> Temps écoulé (horloge murale), en secondes.
+  real(dp) function wall_seconds()
+    integer(8) :: count, rate
+    call system_clock(count, rate)
+    wall_seconds = real(count, dp) / rate
+  end function wall_seconds
+
+  !> n valeurs de lambda régulièrement espacées en log, de LAMBDA_MIN_RATIO * sigma_max à sigma_max.
+  pure function lambda_grid(sigma_max, n) result(lambdas)
+    real(dp), intent(in) :: sigma_max
+    integer, intent(in) :: n
+    real(dp) :: lambdas(n)
+    integer :: i
+    lambdas = [(sigma_max * LAMBDA_MIN_RATIO**(1 - (i - 1.0_dp) / (n - 1)), i=1, n)]
+  end function lambda_grid
+
+  !> Courbe en L sur la grille lambdas et indice de son coin (à partir de 1).
+  pure subroutine lcurve_scan(sigma, beta, rperp2, lambdas, res_norms, sol_norms, icorner)
+    real(dp), intent(in) :: sigma(:), beta(:), rperp2, lambdas(:)
+    real(dp), intent(out) :: res_norms(:), sol_norms(:)
+    integer, intent(out) :: icorner
+    integer :: i
+    do i = 1, size(lambdas)
+      call tikhonov_norms(sigma, beta, rperp2, lambdas(i), res_norms(i), sol_norms(i))
+    end do
+    icorner = lcurve_corner(res_norms, sol_norms)
+  end subroutine lcurve_scan
 
   pure integer function coef_count(lmax)
     integer, intent(in) :: lmax
@@ -26,12 +59,18 @@ contains
     integer, intent(in) :: lmax
     real(dp), intent(in) :: cos_theta(:), phi(:)
     real(dp), intent(out) :: a(:, :)
-    real(dp) :: p(0:lmax, 0:lmax)
+    real(dp) :: p(0:lmax, 0:lmax), last_x
     integer :: ipix, l, m, k
 
-    ! ponytail: remplissage ligne par ligne (accès mémoire en pas de npix), à revoir en Phase 5
+    ! Les pixels d'une même rangée partagent cos(theta) : P n'est recalculé qu'au
+    ! changement de rangée. Chaque thread remplit un bloc contigu de lignes de a.
+    last_x = huge(1.0_dp)
+    !$omp parallel do schedule(static) private(p, k, l, m) firstprivate(last_x)
     do ipix = 1, size(cos_theta)
-      call schmidt_legendre(lmax, cos_theta(ipix), p)
+      if (abs(cos_theta(ipix) - last_x) > 0) then
+        call schmidt_legendre(lmax, cos_theta(ipix), p)
+        last_x = cos_theta(ipix)
+      end if
       k = 0
       do l = 0, lmax
         a(ipix, k + 1) = p(l, 0)
@@ -42,6 +81,7 @@ contains
         k = k + 2 * l + 1
       end do
     end do
+    !$omp end parallel do
   end subroutine design_matrix
 
   !> Décompose A = (Q U) S V^T : QR de Householder A = Q R, puis SVD de la petite
@@ -53,28 +93,41 @@ contains
     real(dp), intent(in) :: b(:)
     real(dp), intent(out) :: sigma(:), vt(:, :), beta(:), rperp2
     integer, intent(out) :: info
+    real(dp) :: beta_multi(size(beta), 1), rperp2_multi(1)
+    call svd_decompose_multi(a, reshape(b, [size(b), 1]), sigma, vt, beta_multi, rperp2_multi, info)
+    beta = beta_multi(:, 1)
+    rperp2 = rperp2_multi(1)
+  end subroutine svd_decompose
+
+  !> Comme svd_decompose, pour plusieurs seconds membres b(:, k) partageant la matrice.
+  subroutine svd_decompose_multi(a, b, sigma, vt, beta, rperp2, info)
+    real(dp), contiguous, intent(inout) :: a(:, :)
+    real(dp), intent(in) :: b(:, :)
+    real(dp), intent(out) :: sigma(:), vt(:, :), beta(:, :), rperp2(:)
+    integer, intent(out) :: info
     external :: dgeqrf, dormqr, dgesdd
-    real(dp), allocatable :: tau(:), work(:), qtb(:), r(:, :), u(:, :)
+    real(dp), allocatable :: tau(:), work(:), qtb(:, :), r(:, :), u(:, :)
     integer, allocatable :: iwork(:)
     real(dp) :: query(1)
-    integer :: m, n, j
+    integer :: m, n, j, nrhs
 
     m = size(a, 1)
     n = size(a, 2)
+    nrhs = size(b, 2)
     info = -1
     if (m < n) return
-    allocate (tau(n), qtb(m), r(n, n), u(n, n), iwork(8 * n))
+    allocate (tau(n), r(n, n), u(n, n), iwork(8 * n))
     qtb = b
 
     call dgeqrf(m, n, a, m, tau, query, -1, info)
     allocate (work(int(query(1))))
     call dgeqrf(m, n, a, m, tau, work, size(work), info)
     if (info /= 0) return
-    call dormqr('L', 'T', m, 1, n, a, m, tau, qtb, m, query, -1, info)
+    call dormqr('L', 'T', m, nrhs, n, a, m, tau, qtb, m, query, -1, info)
     call ensure_size(work, int(query(1)))
-    call dormqr('L', 'T', m, 1, n, a, m, tau, qtb, m, work, size(work), info)
+    call dormqr('L', 'T', m, nrhs, n, a, m, tau, qtb, m, work, size(work), info)
     if (info /= 0) return
-    rperp2 = sum(qtb(n + 1:m)**2)
+    rperp2 = sum(qtb(n + 1:m, :)**2, dim=1)
 
     r = 0
     do j = 1, n
@@ -84,8 +137,8 @@ contains
     call ensure_size(work, int(query(1)))
     call dgesdd('A', n, n, r, n, sigma, u, n, vt, n, work, size(work), iwork, info)
     if (info /= 0) return
-    beta = matmul(qtb(1:n), u)
-  end subroutine svd_decompose
+    beta = matmul(transpose(u), qtb(1:n, :))
+  end subroutine svd_decompose_multi
 
   subroutine ensure_size(work, n)
     real(dp), allocatable, intent(inout) :: work(:)

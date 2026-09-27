@@ -31,16 +31,20 @@ set(CMAKE_Fortran_MODULE_DIRECTORY ${CMAKE_BINARY_DIR}/modules)
 add_library(magnetosun_kernels
   src/fortran/legendre.f90
   src/fortran/sh_fit.f90
+  src/fortran/sh_rings.f90
   src/fortran/pfss.f90
   src/fortran/capi.f90)
 target_include_directories(magnetosun_kernels PUBLIC ${CMAKE_Fortran_MODULE_DIRECTORY})
-target_link_libraries(magnetosun_kernels PUBLIC LAPACK::LAPACK)
+# OpenMP dans les noyaux Fortran : blocs (m ; cos/sin) du solveur par anneaux,
+# pixels de la matrice du solveur dense.
+find_package(OpenMP REQUIRED COMPONENTS Fortran)
+target_link_libraries(magnetosun_kernels PUBLIC LAPACK::LAPACK OpenMP::OpenMP_Fortran)
 
 add_library(magnetosun src/cpp/synoptic_map.cpp src/cpp/sh_model.cpp src/cpp/insitu.cpp)
 target_include_directories(magnetosun PUBLIC src/cpp)
 target_link_libraries(magnetosun PUBLIC PkgConfig::CFITSIO magnetosun_kernels)
 
-foreach(program gong_export fit_map pfss_map polarity)
+foreach(program gong_export fit_map pfss_map polarity bench_fit)
   add_executable(${program} src/cpp/${program}.cpp)
   target_link_libraries(${program} PRIVATE magnetosun)
 endforeach()
@@ -56,7 +60,7 @@ foreach(name synoptic_map sh_model insitu)
   add_test(NAME ${name} COMMAND test_${name})
 endforeach()
 
-foreach(name legendre sh_fit pfss)
+foreach(name legendre sh_fit sh_rings pfss)
   add_executable(test_${name} tests/test_${name}.f90)
   target_link_libraries(test_${name} PRIVATE magnetosun_kernels)
   add_test(NAME ${name} COMMAND test_${name})

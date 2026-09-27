@@ -2,6 +2,7 @@
 // carte synthétique, lecture/écriture des coefficients, erreurs.
 #include "sh_model.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
@@ -108,9 +109,41 @@ void testRejectsInvalidInputs() {
     check(badLine.find("ligne invalide") != std::string::npos,
           "l > lmax refusé (reçu : \"" + badLine + "\")");
 
-    const std::string tooFew = throwMessage([] { fitSynopticMap(knownMap(4, 2), 3, 90.0); });
+    const std::string tooFew = throwMessage(
+        [] { fitSynopticMap(knownMap(4, 2), 3, 90.0, -1.0, FitSolver::Dense); });
     check(tooFew.find("sous-déterminé") != std::string::npos,
-          "moins de pixels que d'inconnues refusé (reçu : \"" + tooFew + "\")");
+          "dense : moins de pixels que d'inconnues refusé (reçu : \"" + tooFew + "\")");
+
+    const std::string tooFine = throwMessage([] { fitSynopticMap(knownMap(4, 2), 3, 90.0); });
+    check(tooFine.find("trop grand") != std::string::npos,
+          "anneaux : 2 lmax >= nLon refusé (reçu : \"" + tooFine + "\")");
+}
+
+void testRingsAndDenseSolversAgree() {
+    // Carte connue + petite perturbation déterministe, pôles masqués, lambda imposé :
+    // sur ce cas bien posé, la courbe en L est plate et son « coin » dépend des arrondis.
+    SynopticMap map = knownMap(72, 36);
+    for (size_t k = 0; k < map.br.size(); ++k) {
+        map.br[k] += 0.01 * std::sin(7.0 * k + 3.0);
+    }
+
+    const ShFit rings = fitSynopticMap(map, 8, 60.0, 0.05, FitSolver::Rings);
+    const ShFit dense = fitSynopticMap(map, 8, 60.0, 0.05, FitSolver::Dense);
+
+    double maxDiff = 0.0;
+    for (size_t k = 0; k < rings.coeffs.g.size(); ++k) {
+        maxDiff = std::max({maxDiff, std::abs(rings.coeffs.g[k] - dense.coeffs.g[k]),
+                            std::abs(rings.coeffs.h[k] - dense.coeffs.h[k])});
+    }
+    double maxCurveDiff = 0.0;
+    for (size_t k = 0; k < rings.lambdas.size(); ++k) {
+        maxCurveDiff = std::max({maxCurveDiff,
+                                 std::abs(rings.residualNorms[k] / dense.residualNorms[k] - 1),
+                                 std::abs(rings.solutionNorms[k] / dense.solutionNorms[k] - 1)});
+    }
+    check(maxDiff < 1e-9, "mêmes coefficients (écart " + std::to_string(maxDiff) + ")");
+    check(maxCurveDiff < 1e-9, "même courbe en L");
+    check(rings.nPixels == dense.nPixels, "mêmes pixels utilisés");
 }
 
 }  // namespace
@@ -121,6 +154,7 @@ int main() {
     testMaskReducesPixelCount();
     testCoefficientsRoundTrip();
     testRejectsInvalidInputs();
+    testRingsAndDenseSolversAgree();
     if (failures > 0) {
         std::cerr << failures << " vérification(s) en échec\n";
         return 1;
