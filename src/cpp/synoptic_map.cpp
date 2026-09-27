@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <fstream>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -212,4 +213,13 @@ FluxBalance computeFluxBalance(const SynopticMap& map) {
         unsignedSum += std::abs(b);
     }
     return {net * pixelAreaCm2, unsignedSum * pixelAreaCm2};
+}
+
+void writeRawBinary(const std::vector<double>& values, const std::string& path) {
+    std::ofstream out(path, std::ios::binary);
+    out.write(reinterpret_cast<const char*>(values.data()),
+              static_cast<std::streamsize>(values.size() * sizeof(double)));
+    if (!out) {
+        throw std::runtime_error(path + " : écriture impossible");
+    }
 }

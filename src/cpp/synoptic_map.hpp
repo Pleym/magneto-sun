@@ -34,3 +34,7 @@ struct FluxBalance {
 SynopticMap readGongMap(const std::string& path);
 
 FluxBalance computeFluxBalance(const SynopticMap& map);
+
+// Écrit un champ sur la grille canonique en binaire brut pour gnuplot
+// (float64, longitude la plus rapide, sud -> nord).
+void writeRawBinary(const std::vector<double>& values, const std::string& path);

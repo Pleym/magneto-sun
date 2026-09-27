@@ -10,3 +10,6 @@ slurm-*.out
 
 # macOS
 .DS_Store
+
+# Environnement Python de validation (Phase 3)
+validation/.venv/

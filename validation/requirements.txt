@@ -1,0 +1,2 @@
+sunkit-magex==1.2.0
+sunpy==8.0.0

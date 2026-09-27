@@ -6,21 +6,8 @@
 #include <algorithm>
 #include <cstdio>
 #include <exception>
-#include <fstream>
-#include <stdexcept>
-#include <string>
-#include <vector>
 
 namespace {
-
-void writeRawBinary(const std::vector<double>& values, const std::string& path) {
-    std::ofstream out(path, std::ios::binary);
-    out.write(reinterpret_cast<const char*>(values.data()),
-              static_cast<std::streamsize>(values.size() * sizeof(double)));
-    if (!out) {
-        throw std::runtime_error(path + " : écriture impossible");
-    }
-}
 
 void printSummary(const SynopticMap& map) {
     const auto [minIt, maxIt] = std::minmax_element(map.br.begin(), map.br.end());
