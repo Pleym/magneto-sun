@@ -1,0 +1,12 @@
+# Répertoires de compilation CMake
+build/
+build-*/
+
+# Données brutes téléchargées (GONG, in situ) : jamais versionnées, re-téléchargeables
+data/
+
+# Sorties Slurm
+slurm-*.out
+
+# macOS
+.DS_Store
