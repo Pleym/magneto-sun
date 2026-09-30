@@ -6,14 +6,14 @@ Can a single map of the Sun's surface magnetic field predict the magnetic polari
 solar wind measured by a spacecraft? magneto-sun answers with a data processing chain
 written in Fortran and C++, from raw observations to scored science products.
 
-![Replay of the 2020–2022 Solar Orbiter campaign](figures/replay.gif)
+![Solar wind source surface, 2020–2022](figures/replay.gif)
 
-*Replay of the real processing of 33 windows of 27 days (July 2020 – December 2022). For
-each window the chain goes through levels L1 → L4. The map shows the modelled magnetic
-field at 2.5 solar radii, the current sheet that separates the two polarities (black), and
-the points where the wind measured by Solar Orbiter came from, coloured by its measured
-polarity. The chart adds the window's score. Watch the current sheet warp as the Sun
-becomes more active. A video version is in [figures/replay.mp4](figures/replay.mp4).*
+*The Sun's magnetic field where the solar wind starts (2.5 solar radii), one map per
+27-day window from July 2020 to December 2022, computed by the chain from GONG
+magnetograms. Red: field pointing away from the Sun; blue: toward the Sun. Black: the
+current sheet between them, the boundary Solar Orbiter crosses when the measured polarity
+flips. Nearly flat at solar minimum in 2020, it warps strongly as the Sun becomes more
+active. Video version: [figures/replay.mp4](figures/replay.mp4).*
 
 ## Results
 

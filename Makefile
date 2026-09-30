@@ -3,7 +3,7 @@
 #   make build          compile (Release) et lance les tests
 #   make fetch          télécharge les entrées L1 (réseau : frontale ou poste local)
 #   make campaign       produits L2 et L3 de chaque fenêtre, puis synthèse L4
-#   make replay         vitrine : rejeu animé de la campagne (figures/replay.gif, .mp4)
+#   make replay         vitrine : animation de la surface source (figures/replay.gif, .mp4)
 #   make status         état de chaque fenêtre
 #   make clean-products supprime les produits (les entrées L1 restent)
 #
@@ -100,8 +100,8 @@ $(PRODUCTS)/campaign_summary.png: $(PRODUCTS)/campaign_summary.txt plots/campaig
 
 campaign: $(PRODUCTS)/campaign_summary.png $(SURFACES)
 
-# --- Vitrine : rejeu de la campagne (GIF + MP4) et figure de synthèse versionnée -------
-figures/replay.gif: $(PRODUCTS)/campaign_summary.txt $(SURFACES) scripts/make_replay.sh \
+# --- Vitrine : animation de la surface source (GIF + MP4) et figure de synthèse --------
+figures/replay.gif: $(SURFACES) scripts/make_replay.sh \
                     plots/replay_frame.gp
 	scripts/make_replay.sh $(CAMPAIGN) $(PRODUCTS) figures/replay
 

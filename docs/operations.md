@@ -42,7 +42,7 @@ make build            # compile (Release) and run the unit tests
 make fetch            # download the L1 inputs of every window (needs network)
 make -j4 -k campaign  # L2, L3 for every window, then the L4 summary
 make status           # per-window status and agreement
-make replay           # animated replay of the campaign (figures/replay.gif and .mp4)
+make replay           # animation of the source surface over the campaign (GIF, MP4)
 ```
 
 The full 2020–2022 campaign (33 windows) downloads in about 7 minutes and processes in
@@ -76,11 +76,10 @@ make CAMPAIGN=config/campaign_solo_2020_2022.txt campaign
 
 ## Replay
 
-`make replay` (`scripts/make_replay.sh`, `plots/replay_frame.gp`) turns a processed
-campaign into an operations-dashboard animation: for each window the L1 → L4 stages light
-up in turn, the window's source-surface map appears with the spacecraft footpoints, and
-the campaign chart gains a point. Every value shown is read from the products; nothing is
-staged.
+`make replay` (`scripts/make_replay.sh`, `plots/replay_frame.gp`) turns the L3
+source-surface products of a processed campaign into an animation, one map per window:
+radial field at 2.5 solar radii and the neutral line (base of the heliospheric current
+sheet). Output: `figures/replay.gif` and `figures/replay.mp4`.
 
 ## Continuous integration
 
