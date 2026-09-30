@@ -62,3 +62,33 @@ std::vector<int> sectorPolarity(const std::vector<int>& hourlySign, int windowHo
 
 // Heures où la polarité change par rapport à la dernière heure de polarité connue.
 std::vector<size_t> polarityChanges(const std::vector<int>& polarity);
+
+// Produit L2 : une ligne par heure, moyennes des mesures et position de la sonde au
+// milieu de l'heure. Indépendant des formats d'entrée (AMDA, Horizons).
+struct HourlyRecord {
+    double t;                    // milieu de l'heure (s depuis 1970, UTC)
+    std::array<double, 3> bRtn;  // nT ; NaN si aucune mesure dans l'heure
+    double vR;                   // km/s ; NaN si aucune mesure dans l'heure
+    Position position;
+};
+
+std::vector<HourlyRecord> buildHourlySeries(const VectorSeries& mag, const VectorSeries& pas,
+                                            const Ephemeris& ephemeris, double t0, int nHours);
+void writeHourlySeries(const std::vector<HourlyRecord>& series, const std::string& path);
+std::vector<HourlyRecord> readHourlySeries(const std::string& path);
+
+// Score d'une fenêtre : accords en % des heures où mesure et prédiction sont connues ;
+// status « insufficient_data » (accords NaN) sous minValidHours heures valides.
+struct PolarityScore {
+    std::string status;
+    int validHours;
+    double hourlyAgreement;
+    double sectorAgreement;
+    double baseline;  // toujours la polarité majoritaire
+    size_t measuredChanges;
+    size_t predictedChanges;
+};
+
+// measured : polarité horaire, sector : polarité de secteur, predicted : prédite (0 = inconnue).
+PolarityScore scorePolarity(const std::vector<int>& measured, const std::vector<int>& sector,
+                            const std::vector<int>& predicted, int minValidHours);

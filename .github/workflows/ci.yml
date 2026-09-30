@@ -1,0 +1,39 @@
+# Intégration continue : à chaque push et pull request, compile le code Fortran + C++
+# (Debug avec contrôle des bornes, et Release), lance tous les tests, et vérifie que la
+# chaîne de traitement (Makefile + table de campagne) se déroule à blanc.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-and-test:
+    name: ${{ matrix.build-type }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        build-type: [Debug, Release]
+    env:
+      OMP_NUM_THREADS: 2
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gfortran cmake pkg-config libcfitsio-dev liblapack-dev libopenblas-dev
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=${{ matrix.build-type }}
+
+      - name: Build
+        run: cmake --build build -j "$(nproc)"
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Pipeline dry run
+        run: make -n campaign BUILD=build > /dev/null

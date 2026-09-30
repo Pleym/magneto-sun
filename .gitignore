@@ -13,3 +13,6 @@ slurm-*.out
 
 # Environnement Python de validation (Phase 3)
 validation/.venv/
+
+# Produits de la chaîne (régénérables par make)
+products/

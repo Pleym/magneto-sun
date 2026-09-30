@@ -212,6 +212,95 @@ std::vector<int> sectorPolarity(const std::vector<int>& hourlySign, int windowHo
     return sector;
 }
 
+std::vector<HourlyRecord> buildHourlySeries(const VectorSeries& mag, const VectorSeries& pas,
+                                            const Ephemeris& ephemeris, double t0, int nHours) {
+    const auto b = hourlyMeans(mag, t0, nHours);
+    const auto v = hourlyMeans(pas, t0, nHours);
+    std::vector<HourlyRecord> series;
+    for (int k = 0; k < nHours; ++k) {
+        const double t = t0 + (k + 0.5) * 3600.0;
+        series.push_back({t, b[k], v[k][0], interpolatePosition(ephemeris, t)});
+    }
+    return series;
+}
+
+void writeHourlySeries(const std::vector<HourlyRecord>& series, const std::string& path) {
+    FILE* out = std::fopen(path.c_str(), "w");
+    if (out == nullptr) {
+        throw std::runtime_error(path + " : écriture impossible");
+    }
+    std::fprintf(out, "# magnetosun L2 : série horaire in situ (moyennes horaires, NaN si vide)\n"
+                      "# t (s depuis 1970, UTC) date B_R B_T B_N (nT) v_R (km/s) r (UA) "
+                      "lon_carrington (°) lat_carrington (°)\n");
+    for (const HourlyRecord& h : series) {
+        std::fprintf(out, "%.0f %s %.4f %.4f %.4f %.2f %.6f %.4f %.4f\n", h.t,
+                     formatIsoTime(h.t).c_str(), h.bRtn[0], h.bRtn[1], h.bRtn[2], h.vR,
+                     h.position.rAu, h.position.carrLonDeg, h.position.carrLatDeg);
+    }
+    if (std::fclose(out) != 0) {
+        throw std::runtime_error(path + " : écriture impossible");
+    }
+}
+
+std::vector<HourlyRecord> readHourlySeries(const std::string& path) {
+    std::ifstream in(path);
+    if (!in) {
+        throw std::runtime_error(path + " : lecture impossible");
+    }
+    std::vector<HourlyRecord> series;
+    std::string line;
+    while (std::getline(in, line)) {
+        if (line.empty() || line[0] == '#') {
+            continue;
+        }
+        std::istringstream row(line);
+        std::array<std::string, 9> field;
+        for (std::string& f : field) {
+            if (!(row >> f)) {
+                throw std::runtime_error(path + " : ligne L2 invalide « " + line + " »");
+            }
+        }
+        // std::stod lit « nan », que l'opérateur >> refuse
+        series.push_back({std::stod(field[0]),
+                          {std::stod(field[2]), std::stod(field[3]), std::stod(field[4])},
+                          std::stod(field[5]),
+                          {std::stod(field[7]), std::stod(field[8]), std::stod(field[6])}});
+    }
+    if (series.empty()) {
+        throw std::runtime_error(path + " : aucune heure");
+    }
+    return series;
+}
+
+PolarityScore scorePolarity(const std::vector<int>& measured, const std::vector<int>& sector,
+                            const std::vector<int>& predicted, int minValidHours) {
+    int valid = 0;
+    int hourlyHits = 0;
+    int sectorHits = 0;
+    int outward = 0;
+    for (size_t k = 0; k < sector.size(); ++k) {
+        if (sector[k] == 0 || predicted[k] == 0) {
+            continue;
+        }
+        ++valid;
+        hourlyHits += measured[k] == predicted[k];
+        sectorHits += sector[k] == predicted[k];
+        outward += sector[k] > 0;
+    }
+    const size_t measuredChanges = polarityChanges(sector).size();
+    const size_t predictedChanges = polarityChanges(predicted).size();
+    if (valid < std::max(minValidHours, 1)) {
+        return {"insufficient_data", valid, NaN, NaN, NaN, measuredChanges, predictedChanges};
+    }
+    return {"ok",
+            valid,
+            100.0 * hourlyHits / valid,
+            100.0 * sectorHits / valid,
+            100.0 * std::max(outward, valid - outward) / valid,
+            measuredChanges,
+            predictedChanges};
+}
+
 std::vector<size_t> polarityChanges(const std::vector<int>& polarity) {
     std::vector<size_t> changes;
     int last = 0;

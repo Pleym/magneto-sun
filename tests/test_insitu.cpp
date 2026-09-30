@@ -117,6 +117,50 @@ void testSectorIgnoresSwitchbacks() {
     check(polarityChanges(hourly).size() == 3, "sans filtrage : 3 changements");
 }
 
+void testHourlySeriesRoundTripKeepsNaN() {
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    const std::vector<HourlyRecord> series{
+        {1594686600.0, {{8.98, -4.59, 1.11}}, 431.9, {127.24, 2.22, 0.6296}},
+        {1594690200.0, {{nan, nan, nan}}, nan, {126.73, 2.21, 0.6298}}};
+    const std::string path =
+        (std::filesystem::temp_directory_path() / "magnetosun_l2.txt").string();
+
+    writeHourlySeries(series, path);
+    const std::vector<HourlyRecord> back = readHourlySeries(path);
+    std::remove(path.c_str());
+
+    check(back.size() == 2 && back[0].t == series[0].t, "L2 : heures relues");
+    check(std::abs(back[0].bRtn[1] + 4.59) < 1e-9 && std::abs(back[0].vR - 431.9) < 1e-9,
+          "L2 : mesures relues");
+    check(std::abs(back[1].position.carrLonDeg - 126.73) < 1e-9 && back[1].position.rAu == 0.6298,
+          "L2 : position relue");
+    check(std::isnan(back[1].bRtn[0]) && std::isnan(back[1].vR), "L2 : heures vides relues en NaN");
+}
+
+void testScoreFlagsInsufficientData() {
+    const std::vector<int> unknown(100, 0);
+
+    const PolarityScore score = scorePolarity(unknown, unknown, unknown, 48);
+
+    check(score.status == "insufficient_data" && score.validHours == 0 &&
+              std::isnan(score.sectorAgreement),
+          "aucune heure valide : produit marqué, sans division par zéro");
+}
+
+void testScoreAgainstMajorityBaseline() {
+    // 60 h sortantes puis 40 h entrantes mesurées ; prédiction toujours sortante
+    std::vector<int> sector(60, 1);
+    sector.insert(sector.end(), 40, -1);
+    const std::vector<int> predicted(100, 1);
+
+    const PolarityScore score = scorePolarity(sector, sector, predicted, 48);
+
+    check(score.status == "ok" && score.validHours == 100, "100 heures valides");
+    check(score.sectorAgreement == 60.0 && score.baseline == 60.0,
+          "prédiction constante = référence triviale (60 %)");
+    check(score.measuredChanges == 1 && score.predictedChanges == 0, "changements comptés");
+}
+
 }  // namespace
 
 int main() {
@@ -127,6 +171,9 @@ int main() {
     testParkerSpiralProjection();
     testBallisticMapping();
     testSectorIgnoresSwitchbacks();
+    testHourlySeriesRoundTripKeepsNaN();
+    testScoreFlagsInsufficientData();
+    testScoreAgainstMajorityBaseline();
     if (failures > 0) {
         std::cerr << failures << " vérification(s) en échec\n";
         return 1;

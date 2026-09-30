@@ -44,7 +44,7 @@ add_library(magnetosun src/cpp/synoptic_map.cpp src/cpp/sh_model.cpp src/cpp/ins
 target_include_directories(magnetosun PUBLIC src/cpp)
 target_link_libraries(magnetosun PUBLIC PkgConfig::CFITSIO magnetosun_kernels)
 
-foreach(program gong_export fit_map pfss_map polarity bench_fit)
+foreach(program gong_export fit_map pfss_map insitu_l2 polarity bench_fit)
   add_executable(${program} src/cpp/${program}.cpp)
   target_link_libraries(${program} PRIVATE magnetosun)
 endforeach()
