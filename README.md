@@ -2,69 +2,94 @@
 
 [![CI](https://github.com/Pleym/magneto-sun/actions/workflows/ci.yml/badge.svg)](https://github.com/Pleym/magneto-sun/actions/workflows/ci.yml)
 
-Can a single map of the Sun's surface magnetic field predict the magnetic polarity of the
-solar wind measured by a spacecraft? magneto-sun answers with a data processing chain
-written in Fortran and C++, from raw observations to scored science products.
+magneto-sun predicts the magnetic polarity of the solar wind reaching Solar Orbiter from
+maps of the Sun's surface magnetic field, and compares the prediction with the spacecraft
+measurements. The processing chain is written in Fortran (numerical kernels) and C++
+(data handling), and is organised like a small mission ground segment, from raw data to
+scored science products.
 
 ![Solar wind source surface, 2020–2022](figures/replay.gif)
 
-*The Sun's magnetic field where the solar wind starts (2.5 solar radii), one map per
-27-day window from July 2020 to December 2022, computed by the chain from GONG
-magnetograms. Red: field pointing away from the Sun; blue: toward the Sun. Black: the
-current sheet between them, the boundary Solar Orbiter crosses when the measured polarity
-flips. Nearly flat at solar minimum in 2020, it warps strongly as the Sun becomes more
-active. Video version: [figures/replay.mp4](figures/replay.mp4).*
+*Magnetic field at 2.5 solar radii, one map per 27-day window from July 2020 to December
+2022. Red: field pointing away from the Sun; blue: toward the Sun; black: the current
+sheet between them. Video version: [figures/replay.mp4](figures/replay.mp4).*
+
+## Method
+
+1. **Surface field.** A GONG synoptic magnetogram gives the radial magnetic field over
+   the whole solar surface.
+2. **Spherical harmonics.** The map is expanded in spherical harmonics by least squares,
+   stabilised by Tikhonov regularisation with the L-curve criterion.
+3. **Coronal field.** A potential-field source-surface (PFSS) model extends the field up
+   to 2.5 solar radii. The line where the field changes sign there is the base of the
+   heliospheric current sheet.
+4. **In situ polarity.** Solar Orbiter's magnetic field gives the measured polarity, along
+   the Parker spiral. Each hour of solar wind is traced back to the source surface with
+   the measured wind speed (ballistic mapping).
+5. **Score.** For each 27-day window, the score is the fraction of hours where predicted
+   and measured polarities agree. It is compared with a baseline that always predicts the
+   majority polarity.
+
+## Data
+
+| Data | Provider | Access |
+|---|---|---|
+| GONG hourly synoptic magnetograms (zero-point corrected) | National Solar Observatory | [gong2.nso.edu/oQR/zqs](https://gong2.nso.edu/oQR/zqs/) |
+| SDO/HMI synoptic magnetograms (performance tests) | JSOC, Stanford | [jsoc.stanford.edu/data/hmi/synoptic](http://jsoc.stanford.edu/data/hmi/synoptic/) |
+| Solar Orbiter MAG, magnetic field (L2, RTN, 1 min) | AMDA, CDPP (from the [ESA Solar Orbiter Archive](https://soar.esac.esa.int/)) | [amda.irap.omp.eu](https://amda.irap.omp.eu/) |
+| Solar Orbiter SWA-PAS, solar wind speed | AMDA, CDPP | [amda.irap.omp.eu](https://amda.irap.omp.eu/) |
+| Solar Orbiter position in Carrington coordinates | JPL Horizons | [ssd.jpl.nasa.gov/horizons](https://ssd.jpl.nasa.gov/horizons/) |
+
+The campaign covers 33 windows of 27 days, from 14 July 2020 to 22 December 2022
+([config/campaign_solo_2020_2022.txt](config/campaign_solo_2020_2022.txt)). All inputs
+are downloaded by the scripts in [scripts/](scripts/).
 
 ## Results
 
-- **Polarity prediction.** Over 27 windows, the model predicts the measured polarity
-  **85 % of the time** on average, against 63 % for a trivial "always the majority
-  polarity" baseline. It beats the baseline in 24 windows out of 27.
-- **Missing data handled.** 6 windows (Nov 2020 – Apr 2021) have no solar wind speed
-  measurement: the chain flags them as `insufficient_data` instead of failing.
-- **Validated physics.** The coronal model agrees with the independent solver
-  [sunkit-magex](https://github.com/sunpy/sunkit-magex) on 99.9 % of the source surface
-  (correlation 1.0000).
+- **Polarity.** Over the 27 windows with complete data, the predicted polarity matches the
+  measurement **85 % of the time** on average, against 63 % for the majority-polarity
+  baseline. The model beats the baseline in 24 windows out of 27.
+- **Missing data.** The 6 windows between November 2020 and April 2021 have no solar wind
+  speed measurement. They are flagged as insufficient data rather than scored.
+- **Validation.** The PFSS model agrees with the independent solver
+  [sunkit-magex](https://github.com/sunpy/sunkit-magex) on 99.9 % of the source surface.
 - **Performance.** An exact block decomposition of the spherical-harmonic fit gives the
-  same solution about **6,000× faster** than the direct least-squares solver (24 s → 4 ms
-  at degree 60). A full SDO/HMI map (5.1 million pixels, 520,000 unknowns) is fitted in
-  10 s on a laptop.
+  same solution about 6,000 times faster than the direct least-squares solver. A full
+  SDO/HMI map (5.1 million pixels, 520,000 unknowns) is fitted in 10 seconds on a laptop.
 
 ![Agreement per window, and Solar Orbiter latitude and distance](figures/campaign_summary.png)
 
-## How it is built: a miniature ground segment
+## Processing chain
 
-Space missions process their data in a *ground segment*: data arrive, go through
-successive processing levels, and become science products that scientists can trust.
-This project reproduces that organisation at small scale, on real mission data.
+- **Levels.** L1 raw inputs, L2 standardised hourly in situ series, L3 science products
+  (spherical-harmonic fit, PFSS map, polarity score), L4 campaign summary.
+- **Traceability.** Each product has a `.meta.json` record with the code version, the
+  parameters and the checksums of the program and of every input.
+- **Automation.** GNU Make runs the campaign: only outdated products are recomputed, steps
+  run in parallel, and a failing window does not stop the others. Downloads are kept
+  separate from computing, so the chain can run on cluster nodes without network access.
+- **Testing.** Every algorithm is tested on synthetic data with a known answer. Build and
+  tests run on every push (GitHub Actions).
+- **Performance.** OpenMP parallelism and a benchmark kit for the ROMEO supercomputer.
 
-- **Processing levels.** L1: raw inputs as delivered (GONG magnetogram, Solar Orbiter
-  magnetic field and wind speed from AMDA, spacecraft orbit from JPL Horizons). L2: a
-  standardised hourly series, independent of the input formats. L3: science products
-  (spherical-harmonic fit, coronal field model, polarity score). L4: campaign summary.
-- **Traceability.** Every product comes with a `.meta.json` record: code version,
-  checksum of the program, parameters, checksums of all inputs. Any number can be traced
-  back to the exact data and code that produced it.
-- **Automated operations.** One `make` command runs the whole campaign. Only what changed
-  is recomputed, steps run in parallel, an interrupted run resumes where it stopped, and
-  a failing window does not stop the others. Downloads are separate from computing, so
-  the chain can run on supercomputer nodes without network access.
-- **Validation first.** Every algorithm is tested on synthetic data with a known answer
-  before real data, then compared with independent references (sunkit-magex, JPL
-  Horizons). Build and tests run automatically on every push.
-- **Performance engineering.** Profiling-driven optimisation, OpenMP parallelism, and a
-  benchmark kit for the ROMEO supercomputer.
+Details: [docs/operations.md](docs/operations.md).
 
-Operations manual: [docs/operations.md](docs/operations.md).
+## Usage
 
-## Reproduce
-
-Requirements: CMake, a Fortran and a C++ compiler, cfitsio, LAPACK, gnuplot (and ffmpeg
-for the replay).
+Requirements: CMake, Fortran and C++ compilers, cfitsio, LAPACK, gnuplot, and ffmpeg for
+the animation.
 
 ```bash
 make build            # compile and run the tests
 make fetch            # download the inputs of the 33 windows (~100 MB)
 make -j4 -k campaign  # process every window and build the campaign summary
-make replay           # regenerate the replay animation
+make replay           # regenerate the animation
 ```
+
+## Acknowledgements
+
+Data analysis used the AMDA science analysis system provided by the Centre de Données de
+la Physique des Plasmas (CDPP). Solar Orbiter is a mission of international cooperation
+between ESA and NASA; MAG and SWA data are provided by their instrument teams. GONG data
+are provided by the National Solar Observatory, HMI data by the SDO/HMI team, and
+spacecraft ephemerides by the JPL Solar System Dynamics group.
